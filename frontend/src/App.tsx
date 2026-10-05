@@ -109,6 +109,14 @@ export function App() {
       return [newScreenshot, ...prev];
     });
 
+    // Refresh places in background to fetch official map thumbnail
+    fetch(getApiUrl('/api/gallery/places'))
+      .then((res) => res.json())
+      .then((data) => {
+        if (data?.places) setPlaces(data.places);
+      })
+      .catch(() => {});
+
     setToastMessage(`Tangkapan baru dari "${newScreenshot.place_name}" berhasil disinkronkan`);
     setTimeout(() => {
       setToastMessage(null);

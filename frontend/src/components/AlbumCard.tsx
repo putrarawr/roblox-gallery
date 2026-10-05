@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Layers, MapPin, Calendar, ChevronRight, Gamepad2 } from 'lucide-react';
 import type { AlbumGroup } from '../types.js';
-import { resolveImageUrl } from '../utils/api.js';
+import { resolveImageUrl, getApiUrl } from '../utils/api.js';
 import { formatTimeRelative } from '../utils/format.js';
 
 interface AlbumCardProps {
@@ -10,9 +10,32 @@ interface AlbumCardProps {
 }
 
 export const AlbumCard: React.FC<AlbumCardProps> = ({ album, onOpenAlbum }) => {
+  const [mapThumb, setMapThumb] = useState<string | null>(album.map_thumbnail_url || null);
+  const [gameIcon, setGameIcon] = useState<string | null>(album.icon_url || null);
+
+  // Directly query the map thumbnail if not already present
+  useEffect(() => {
+    if (album.map_thumbnail_url) {
+      setMapThumb(album.map_thumbnail_url);
+    }
+    if (album.icon_url) {
+      setGameIcon(album.icon_url);
+    }
+
+    if (!album.map_thumbnail_url && album.place_id) {
+      fetch(getApiUrl(`/api/roblox/thumbnail/${album.place_id}`))
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.thumbnailUrl) setMapThumb(data.thumbnailUrl);
+          if (data?.iconUrl) setGameIcon(data.iconUrl);
+        })
+        .catch(() => {});
+    }
+  }, [album.map_thumbnail_url, album.icon_url, album.place_id]);
+
   // Priority for Album Cover: Official Roblox Map Thumbnail (16:9), fallback to latest screenshot
-  const hasOfficialThumb = Boolean(album.map_thumbnail_url);
-  const coverUrl = album.map_thumbnail_url || resolveImageUrl(album.cover_url);
+  const hasOfficialThumb = Boolean(mapThumb);
+  const coverUrl = mapThumb || resolveImageUrl(album.cover_url);
 
   // Stack previews from user screenshots
   const firstPhoto = resolveImageUrl(album.photos[0]?.image_url);
@@ -88,8 +111,8 @@ export const AlbumCard: React.FC<AlbumCardProps> = ({ album, onOpenAlbum }) => {
 
         {/* Map Pin / Icon on Bottom Left */}
         <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 text-[11px] text-zinc-200 bg-zinc-950/85 backdrop-blur-md px-2 py-1 rounded-md border border-zinc-800">
-          {album.icon_url ? (
-            <img src={album.icon_url} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" />
+          {gameIcon ? (
+            <img src={gameIcon} alt="" className="w-3.5 h-3.5 rounded-sm object-cover" />
           ) : (
             <MapPin className="w-3 h-3 text-zinc-400" />
           )}
