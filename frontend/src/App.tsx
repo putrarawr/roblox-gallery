@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Header } from './components/Header.js';
 import { ScreenshotCard } from './components/ScreenshotCard.js';
+import { AlbumCard } from './components/AlbumCard.js';
 import { LightboxModal } from './components/LightboxModal.js';
+import { SettingsModal } from './components/SettingsModal.js';
 import { EmptyState } from './components/EmptyState.js';
 import { useRealtimeSync } from './hooks/useRealtimeSync.js';
-import type { Screenshot, PlaceSummary } from './types.js';
+import type { Screenshot, PlaceSummary, AlbumGroup } from './types.js';
 import { getApiUrl } from './utils/api.js';
-import { Sparkles, RefreshCw, AlertCircle } from 'lucide-react';
+import { RefreshCw, AlertCircle, ArrowLeft, ExternalLink, Settings, Sparkles } from 'lucide-react';
 
 export function App() {
   const [screenshots, setScreenshots] = useState<Screenshot[]>([]);
@@ -14,9 +16,12 @@ export function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [selectedAlbum, setSelectedAlbum] = useState<AlbumGroup | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeLightbox, setActiveLightbox] = useState<Screenshot | null>(null);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'albums' | 'timeline'>('albums');
 
   // Fetch initial data
   const fetchData = useCallback(async () => {
@@ -24,21 +29,32 @@ export function App() {
       setLoading(true);
       setError(null);
 
-      const [itemsRes, placesRes] = await Promise.all([
-        fetch(getApiUrl('/api/gallery/items?limit=100')),
-        fetch(getApiUrl('/api/gallery/places'))
-      ]);
+      const itemsUrl = getApiUrl('/api/gallery/items?limit=100');
+      const placesUrl = getApiUrl('/api/gallery/places');
+
+      const itemsRes = await fetch(itemsUrl);
+      const contentType = itemsRes.headers.get('content-type') || '';
+
+      if (!contentType.includes('application/json')) {
+        throw new Error('Backend belum terhubung. Silakan atur URL backend di menu pengaturan.');
+      }
 
       if (!itemsRes.ok) throw new Error('Gagal memuat galeri tangkapan layar');
       const itemsData = await itemsRes.json();
       setScreenshots(itemsData.items || []);
 
-      if (placesRes.ok) {
-        const placesData = await placesRes.json();
-        setPlaces(placesData.places || []);
+      // Fetch places
+      try {
+        const placesRes = await fetch(placesUrl);
+        if (placesRes.ok) {
+          const placesData = await placesRes.json();
+          setPlaces(placesData.places || []);
+        }
+      } catch {
+        // silent fail for secondary endpoint
       }
     } catch (err: any) {
-      console.error(err);
+      console.warn('Fetch error:', err);
       setError(err.message || 'Terjadi kesalahan saat memuat data');
     } finally {
       setLoading(false);
@@ -49,23 +65,43 @@ export function App() {
     fetchData();
   }, [fetchData]);
 
+  // Group screenshots into Albums by Map / Place Name
+  const albumGroups = useMemo<AlbumGroup[]>(() => {
+    const map = new Map<string, Screenshot[]>();
+
+    for (const item of screenshots) {
+      const name = (item.place_name || 'unknown place').trim();
+      if (!map.has(name)) {
+        map.set(name, []);
+      }
+      map.get(name)!.push(item);
+    }
+
+    return Array.from(map.entries())
+      .map(([placeName, photos]) => {
+        const sorted = [...photos].sort(
+          (a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime()
+        );
+        return {
+          id: sorted[0].place_id || placeName,
+          place_name: placeName,
+          place_id: sorted[0].place_id,
+          cover_url: sorted[0].image_url,
+          count: sorted.length,
+          latest_captured_at: sorted[0].captured_at,
+          photos: sorted
+        };
+      })
+      .sort((a, b) => new Date(b.latest_captured_at).getTime() - new Date(a.latest_captured_at).getTime());
+  }, [screenshots]);
+
   // Handle incoming realtime screenshot
   const handleNewScreenshot = useCallback((newScreenshot: Screenshot) => {
     setScreenshots((prev) => {
-      // Avoid duplicate if already exists
       if (prev.some((item) => item.id === newScreenshot.id)) return prev;
       return [newScreenshot, ...prev];
     });
 
-    // Refresh place categories in background
-    fetch(getApiUrl('/api/gallery/places'))
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.places) setPlaces(data.places);
-      })
-      .catch(() => {});
-
-    // Show toast
     setToastMessage(`Tangkapan baru dari "${newScreenshot.place_name}" berhasil disinkronkan`);
     setTimeout(() => {
       setToastMessage(null);
@@ -86,6 +122,18 @@ export function App() {
         if (activeLightbox?.id === id) {
           setActiveLightbox(null);
         }
+        if (selectedAlbum) {
+          setSelectedAlbum((prev) => {
+            if (!prev) return null;
+            const updated = prev.photos.filter((p) => p.id !== id);
+            if (updated.length === 0) return null;
+            return {
+              ...prev,
+              count: updated.length,
+              photos: updated
+            };
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to delete screenshot:', err);
@@ -93,11 +141,22 @@ export function App() {
     }
   };
 
-  // Filtered screenshots
-  const filteredScreenshots = useMemo(() => {
-    return screenshots.filter((item) => {
+  // Filtered albums based on search query
+  const filteredAlbums = useMemo(() => {
+    if (!searchQuery.trim()) return albumGroups;
+    const query = searchQuery.toLowerCase().trim();
+    return albumGroups.filter((album) =>
+      album.place_name.toLowerCase().includes(query) || (album.place_id && album.place_id.includes(query))
+    );
+  }, [albumGroups, searchQuery]);
+
+  // Filtered screenshots for timeline view or open album
+  const currentScreenshots = useMemo(() => {
+    const list = selectedAlbum ? selectedAlbum.photos : screenshots;
+
+    return list.filter((item) => {
       // Place filter
-      if (selectedPlaceId) {
+      if (!selectedAlbum && selectedPlaceId) {
         if (selectedPlaceId === 'unknown') {
           if (item.place_id) return false;
         } else if (item.place_id !== selectedPlaceId) {
@@ -115,10 +174,10 @@ export function App() {
 
       return true;
     });
-  }, [screenshots, selectedPlaceId, searchQuery]);
+  }, [screenshots, selectedAlbum, selectedPlaceId, searchQuery]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+    <div className="min-h-screen bg-black text-zinc-100 flex flex-col font-sans selection:bg-zinc-800 selection:text-white">
       {/* Header */}
       <Header
         wsStatus={wsStatus}
@@ -128,13 +187,20 @@ export function App() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         totalScreenshots={screenshots.length}
+        totalAlbums={albumGroups.length}
+        viewMode={viewMode}
+        onViewModeChange={(mode) => {
+          setViewMode(mode);
+          setSelectedAlbum(null);
+        }}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Realtime Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-40 max-w-sm animate-bounce">
-          <div className="flex items-center gap-2.5 px-4 py-3 bg-indigo-600 text-white text-xs font-semibold rounded-2xl shadow-xl shadow-indigo-900/50 border border-indigo-400/40">
-            <Sparkles className="w-4 h-4 flex-shrink-0 text-amber-300" />
+          <div className="flex items-center gap-2.5 px-4 py-3 bg-zinc-100 text-zinc-950 text-xs font-semibold rounded-2xl shadow-2xl border border-zinc-300">
+            <Sparkles className="w-4 h-4 flex-shrink-0 text-zinc-950" />
             <span>{toastMessage}</span>
           </div>
         </div>
@@ -143,24 +209,34 @@ export function App() {
       {/* Main Content */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-6 sm:px-6">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400">
-            <RefreshCw className="w-8 h-8 animate-spin text-indigo-500 mb-3" />
-            <p className="text-sm font-medium">Memuat galeri tangkapan layar...</p>
+          <div className="flex flex-col items-center justify-center py-28 text-zinc-400">
+            <RefreshCw className="w-7 h-7 animate-spin text-zinc-300 mb-3" />
+            <p className="text-xs font-medium tracking-wide">Memuat galeri foto...</p>
           </div>
         ) : error ? (
-          <div className="max-w-md mx-auto my-12 p-6 rounded-2xl bg-rose-950/40 border border-rose-500/30 text-center">
-            <AlertCircle className="w-8 h-8 text-rose-400 mx-auto mb-2" />
-            <h3 className="text-sm font-semibold text-rose-200">Gagal terhubung ke backend</h3>
-            <p className="text-xs text-rose-300/80 mt-1">{error}</p>
-            <button
-              type="button"
-              onClick={fetchData}
-              className="mt-4 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-xs font-semibold text-white transition-colors"
-            >
-              Coba Lagi
-            </button>
+          <div className="max-w-md mx-auto my-14 p-6 rounded-2xl bg-zinc-900 border border-zinc-800 text-center shadow-xl">
+            <AlertCircle className="w-8 h-8 text-zinc-400 mx-auto mb-3" />
+            <h3 className="text-sm font-semibold text-zinc-100">Koneksi Backend Belum Terhubung</h3>
+            <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">{error}</p>
+            <div className="mt-5 flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsSettingsOpen(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-zinc-100 hover:bg-white text-xs font-semibold text-zinc-950 transition-colors shadow-sm"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                Atur URL Backend
+              </button>
+              <button
+                type="button"
+                onClick={fetchData}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 transition-colors border border-zinc-700"
+              >
+                Coba Lagi
+              </button>
+            </div>
           </div>
-        ) : filteredScreenshots.length === 0 ? (
+        ) : screenshots.length === 0 ? (
           <EmptyState
             hasFilter={selectedPlaceId !== null || searchQuery.trim() !== ''}
             onClearFilter={() => {
@@ -168,11 +244,92 @@ export function App() {
               setSearchQuery('');
             }}
           />
-        ) : (
-          <div className="space-y-4">
-            {/* Gallery Grid: 1 col on mobile (<640px), 2 on small tablet, 3 on desktop, 4 on wide */}
+        ) : selectedAlbum ? (
+          /* Album Detail View */
+          <div className="space-y-5 animate-fadeIn">
+            {/* Album Header Bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-zinc-900/80 border border-zinc-800">
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAlbum(null)}
+                  className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700"
+                  title="Kembali ke daftar album"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                </button>
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                    {selectedAlbum.place_name}
+                  </h2>
+                  <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
+                    <span>{selectedAlbum.count} Tangkapan Layar</span>
+                    {selectedAlbum.place_id && (
+                      <a
+                        href={`https://www.roblox.com/games/${selectedAlbum.place_id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-zinc-400 hover:text-white font-mono transition-colors"
+                      >
+                        <span>ID: {selectedAlbum.place_id}</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAlbum(null)}
+                  className="text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+                >
+                  Lihat Semua Album
+                </button>
+              </div>
+            </div>
+
+            {/* Grid of Photos in this Album */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredScreenshots.map((item) => (
+              {currentScreenshots.map((item) => (
+                <ScreenshotCard
+                  key={item.id}
+                  screenshot={item}
+                  onOpenLightbox={setActiveLightbox}
+                  onDelete={handleDeleteScreenshot}
+                />
+              ))}
+            </div>
+          </div>
+        ) : viewMode === 'albums' ? (
+          /* Albums Overview Grid */
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                Album per Map ({filteredAlbums.length} Map)
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {filteredAlbums.map((album) => (
+                <AlbumCard
+                  key={album.id}
+                  album={album}
+                  onOpenAlbum={(alb) => setSelectedAlbum(alb)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : (
+          /* Timeline All Photos Grid */
+          <div className="space-y-4">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+                Semua Tangkapan Layar ({currentScreenshots.length} Foto)
+              </h2>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              {currentScreenshots.map((item) => (
                 <ScreenshotCard
                   key={item.id}
                   screenshot={item}
@@ -190,6 +347,13 @@ export function App() {
         screenshot={activeLightbox}
         onClose={() => setActiveLightbox(null)}
         onDelete={handleDeleteScreenshot}
+      />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSave={fetchData}
       />
     </div>
   );

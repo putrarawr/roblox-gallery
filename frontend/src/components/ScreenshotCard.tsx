@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Download, Share2, ExternalLink, Trash2, Clock, MapPin, Check } from 'lucide-react';
 import type { Screenshot } from '../types.js';
+import { resolveImageUrl } from '../utils/api.js';
 import { formatFileSize, formatTimeRelative, getDownloadFilename } from '../utils/format.js';
 
 interface ScreenshotCardProps {
@@ -18,14 +19,15 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
   const [shared, setShared] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  const fullImageUrl = resolveImageUrl(screenshot.image_url);
+
   const handleDownload = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
       setDownloading(true);
       const filename = getDownloadFilename(screenshot.place_name, screenshot.id, screenshot.image_url);
 
-      // Fetch blob to ensure native mobile download behavior
-      const response = await fetch(screenshot.image_url);
+      const response = await fetch(fullImageUrl);
       const blob = await response.blob();
       const blobUrl = window.URL.createObjectURL(blob);
 
@@ -38,10 +40,9 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
       window.URL.revokeObjectURL(blobUrl);
     } catch (err) {
       console.error('Download error:', err);
-      // Fallback
-      window.open(screenshot.image_url, '_blank');
+      window.open(fullImageUrl, '_blank');
     } finally {
-      setTimeout(() => setDownloading(false), 800);
+      setTimeout(() => setDownloading(false), 600);
     }
   };
 
@@ -52,14 +53,13 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
         await navigator.share({
           title: `Roblox - ${screenshot.place_name}`,
           text: `Tangkapan layar Roblox saat bermain ${screenshot.place_name}`,
-          url: screenshot.image_url
+          url: fullImageUrl
         });
-      } catch (err) {
-        // User canceled or failed
+      } catch {
+        // User canceled
       }
     } else {
-      // Fallback: Copy link
-      await navigator.clipboard.writeText(screenshot.image_url);
+      await navigator.clipboard.writeText(fullImageUrl);
       setShared(true);
       setTimeout(() => setShared(false), 2000);
     }
@@ -77,44 +77,52 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
 
   return (
     <article
+      tabIndex={0}
+      role="button"
       onClick={() => onOpenLightbox(screenshot)}
-      className="group relative bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg transition-all duration-300 hover:border-slate-700 hover:shadow-indigo-950/20 hover:-translate-y-0.5 cursor-pointer flex flex-col"
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpenLightbox(screenshot);
+        }
+      }}
+      className="group relative bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-lg transition-all duration-300 hover:border-zinc-700 hover:-translate-y-0.5 cursor-pointer flex flex-col focus:outline-none focus:ring-2 focus:ring-zinc-400"
     >
       {/* Thumbnail Area */}
-      <div className="relative aspect-video w-full bg-slate-950 overflow-hidden">
+      <div className="relative aspect-video w-full bg-zinc-950 overflow-hidden">
         <img
-          src={screenshot.image_url}
+          src={fullImageUrl}
           alt={`Tangkapan layar ${screenshot.place_name}`}
           loading="lazy"
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
 
-        {/* Gradient overlay for badges */}
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-black/30 pointer-events-none" />
+        {/* Subtle dark gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950/80 via-transparent to-black/40 pointer-events-none" />
 
         {/* Top Badges */}
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-auto">
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-900/85 backdrop-blur-md text-indigo-300 border border-indigo-500/30 shadow">
-            <MapPin className="w-3 h-3 text-indigo-400 flex-shrink-0" />
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-zinc-950/85 backdrop-blur-md text-zinc-200 border border-zinc-700/80 shadow">
+            <MapPin className="w-3 h-3 text-zinc-400 flex-shrink-0" />
             <span className="truncate max-w-[150px]">{screenshot.place_name}</span>
           </span>
 
-          <span className="px-2 py-0.5 rounded-md text-[11px] font-mono text-slate-300 bg-slate-950/80 backdrop-blur-md border border-slate-800">
+          <span className="px-2 py-0.5 rounded-md text-[11px] font-mono text-zinc-300 bg-zinc-950/85 backdrop-blur-md border border-zinc-800">
             {formatFileSize(screenshot.file_size_bytes)}
           </span>
         </div>
 
         {/* Bottom Time Badge */}
-        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1 text-[11px] text-slate-300 bg-slate-950/80 backdrop-blur-md px-2 py-0.5 rounded-md border border-slate-800/80">
-          <Clock className="w-3 h-3 text-slate-400" />
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1 text-[11px] text-zinc-300 bg-zinc-950/85 backdrop-blur-md px-2 py-0.5 rounded-md border border-zinc-800">
+          <Clock className="w-3 h-3 text-zinc-400" />
           <span>{formatTimeRelative(screenshot.captured_at)}</span>
         </div>
       </div>
 
       {/* Card Content & Action Bar */}
-      <div className="p-3.5 flex items-center justify-between gap-2 bg-slate-900 border-t border-slate-800/80 mt-auto">
+      <div className="p-3.5 flex items-center justify-between gap-2 bg-zinc-900 border-t border-zinc-800/80 mt-auto">
         <div className="min-w-0">
-          <div className="font-medium text-xs sm:text-sm text-slate-200 truncate">
+          <div className="font-semibold text-xs sm:text-sm text-zinc-100 truncate group-hover:text-white transition-colors">
             {screenshot.place_name}
           </div>
           {screenshot.place_id ? (
@@ -123,18 +131,18 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex items-center gap-1 text-[11px] text-indigo-400 hover:text-indigo-300 transition-colors mt-0.5"
+              className="inline-flex items-center gap-1 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors mt-0.5"
             >
               <span>ID: {screenshot.place_id}</span>
               <ExternalLink className="w-2.5 h-2.5" />
             </a>
           ) : (
-            <span className="text-[11px] text-slate-500">Bukan di dalam place</span>
+            <span className="text-[11px] text-zinc-500">Bukan di dalam place</span>
           )}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-1 flex-shrink-0">
+        {/* Actions - Monochrome style */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           {/* Download button */}
           <button
             type="button"
@@ -142,10 +150,10 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
             disabled={downloading}
             aria-label="Unduh gambar"
             title="Unduh resolusi penuh"
-            className="w-8 h-8 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 text-white flex items-center justify-center transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="w-8 h-8 rounded-lg bg-zinc-100 hover:bg-white text-zinc-950 flex items-center justify-center transition-colors shadow-sm focus:outline-none focus:ring-2 focus:ring-zinc-400"
           >
             {downloading ? (
-              <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              <span className="w-4 h-4 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
             ) : (
               <Download className="w-4 h-4" />
             )}
@@ -157,9 +165,9 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
             onClick={handleShare}
             aria-label="Bagikan gambar"
             title="Bagikan atau salin link"
-            className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white flex items-center justify-center transition-colors border border-slate-700"
+            className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white flex items-center justify-center transition-colors border border-zinc-700/80"
           >
-            {shared ? <Check className="w-4 h-4 text-emerald-400" /> : <Share2 className="w-4 h-4" />}
+            {shared ? <Check className="w-4 h-4 text-zinc-100" /> : <Share2 className="w-4 h-4" />}
           </button>
 
           {/* Delete button */}
@@ -170,8 +178,8 @@ export const ScreenshotCard: React.FC<ScreenshotCardProps> = ({
             title={confirmDelete ? "Klik lagi untuk konfirmasi hapus" : "Hapus tangkapan"}
             className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors border ${
               confirmDelete
-                ? 'bg-rose-600 text-white border-rose-500 animate-pulse'
-                : 'bg-slate-800/80 hover:bg-rose-950/60 text-slate-400 hover:text-rose-400 border-slate-700'
+                ? 'bg-zinc-200 text-zinc-950 border-white font-bold'
+                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border-zinc-700/80'
             }`}
           >
             <Trash2 className="w-4 h-4" />

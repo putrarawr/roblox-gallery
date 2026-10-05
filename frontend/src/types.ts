@@ -15,6 +15,16 @@ export interface PlaceSummary {
   latest_captured_at: string;
 }
 
+export interface AlbumGroup {
+  id: string;
+  place_name: string;
+  place_id: string | null;
+  cover_url: string;
+  count: number;
+  latest_captured_at: string;
+  photos: Screenshot[];
+}
+
 export interface GalleryStats {
   totalScreenshots: number;
   totalPlaces: number;

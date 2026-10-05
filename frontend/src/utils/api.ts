@@ -1,10 +1,34 @@
+export function getStoredApiUrl(): string {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('roblox_gallery_api_url') || '';
+  }
+  return '';
+}
+
 export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem('roblox_gallery_api_url');
+    if (stored && stored.trim() !== '') {
+      return stored.trim().replace(/\/$/, '');
+    }
+  }
+
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
-    return envUrl.replace(/\/$/, '');
+    return envUrl.trim().replace(/\/$/, '');
   }
-  // Default to same origin / proxy
+
   return '';
+}
+
+export function setStoredApiUrl(url: string): void {
+  if (typeof window !== 'undefined') {
+    if (!url || url.trim() === '') {
+      localStorage.removeItem('roblox_gallery_api_url');
+    } else {
+      localStorage.setItem('roblox_gallery_api_url', url.trim().replace(/\/$/, ''));
+    }
+  }
 }
 
 export function getApiUrl(path: string): string {
@@ -13,16 +37,39 @@ export function getApiUrl(path: string): string {
   return `${base}${cleanPath}`;
 }
 
+export function resolveImageUrl(url: string): string {
+  if (!url) return '';
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  const base = getApiBaseUrl();
+  const cleanPath = url.startsWith('/') ? url : `/${url}`;
+  return `${base}${cleanPath}`;
+}
+
 export function getWebSocketUrl(): string {
-  const envUrl = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL;
+  const base = getApiBaseUrl();
   
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
-    const parsed = new URL(envUrl);
-    const protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${parsed.host}/ws`;
+  if (base && base.trim() !== '') {
+    try {
+      const parsed = new URL(base);
+      const protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${protocol}//${parsed.host}/ws`;
+    } catch {
+      // fallback
+    }
+  }
+
+  const envWs = import.meta.env.VITE_WS_URL;
+  if (envWs && typeof envWs === 'string' && envWs.trim() !== '') {
+    return envWs;
   }
 
   // Fallback to window.location (local dev & proxy mode)
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${window.location.host}/ws`;
+  if (typeof window !== 'undefined') {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}/ws`;
+  }
+
+  return 'ws://localhost:4000/ws';
 }
