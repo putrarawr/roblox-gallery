@@ -29,7 +29,7 @@ export function getStoredApiUrl(): string {
     return normalizeUrl(envUrl);
   }
 
-  return '';
+  return 'https://roblox-gallery-production.up.railway.app';
 }
 
 export function setStoredApiUrl(url: string): void {
@@ -83,10 +83,10 @@ export function getWebSocketUrl(): string {
   }
 
   // Fallback to window.location (local dev & proxy mode)
-  if (typeof window !== 'undefined') {
+  if (typeof window !== 'undefined' && window.location.hostname === 'localhost') {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}/ws`;
   }
 
-  return 'ws://localhost:4000/ws';
+  return 'wss://roblox-gallery-production.up.railway.app/ws';
 }
