@@ -82,18 +82,25 @@ export function App() {
         const sorted = [...photos].sort(
           (a, b) => new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime()
         );
+        const placeId = sorted[0].place_id;
+        const placeMeta = places.find(
+          (p) => (placeId && p.place_id === placeId) || p.place_name.toLowerCase() === placeName.toLowerCase()
+        );
+
         return {
-          id: sorted[0].place_id || placeName,
+          id: placeId || placeName,
           place_name: placeName,
-          place_id: sorted[0].place_id,
+          place_id: placeId,
           cover_url: sorted[0].image_url,
+          map_thumbnail_url: placeMeta?.thumbnail_url || null,
+          icon_url: placeMeta?.icon_url || null,
           count: sorted.length,
           latest_captured_at: sorted[0].captured_at,
           photos: sorted
         };
       })
       .sort((a, b) => new Date(b.latest_captured_at).getTime() - new Date(a.latest_captured_at).getTime());
-  }, [screenshots]);
+  }, [screenshots, places]);
 
   // Handle incoming realtime screenshot
   const handleNewScreenshot = useCallback((newScreenshot: Screenshot) => {
@@ -253,45 +260,69 @@ export function App() {
           /* Album Detail View */
           <div className="space-y-5 animate-fadeIn">
             {/* Album Header Bar */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-zinc-900/80 border border-zinc-800">
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => setSelectedAlbum(null)}
-                  className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700"
-                  title="Kembali ke daftar album"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
-                <div>
-                  <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
-                    {selectedAlbum.place_name}
-                  </h2>
-                  <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
-                    <span>{selectedAlbum.count} Tangkapan Layar</span>
-                    {selectedAlbum.place_id && (
-                      <a
-                        href={`https://www.roblox.com/games/${selectedAlbum.place_id}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-zinc-400 hover:text-white font-mono transition-colors"
-                      >
-                        <span>ID: {selectedAlbum.place_id}</span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    )}
+            <div className="relative overflow-hidden rounded-2xl bg-zinc-900 border border-zinc-800 p-5 shadow-lg">
+              {/* Official Map Banner Backdrop */}
+              {selectedAlbum.map_thumbnail_url && (
+                <div className="absolute inset-0 opacity-20 pointer-events-none">
+                  <img
+                    src={selectedAlbum.map_thumbnail_url}
+                    alt=""
+                    className="w-full h-full object-cover filter blur-sm scale-105"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/85 to-zinc-950/50" />
+                </div>
+              )}
+
+              <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAlbum(null)}
+                    className="p-2.5 rounded-xl bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700/80 shadow-sm flex-shrink-0"
+                    title="Kembali ke daftar album"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </button>
+
+                  {/* Official Game Icon */}
+                  {selectedAlbum.icon_url && (
+                    <img
+                      src={selectedAlbum.icon_url}
+                      alt=""
+                      className="w-12 h-12 rounded-xl object-cover border border-zinc-700 shadow-md flex-shrink-0"
+                    />
+                  )}
+
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-white tracking-tight">
+                      {selectedAlbum.place_name}
+                    </h2>
+                    <div className="flex items-center gap-3 text-xs text-zinc-400 mt-0.5">
+                      <span>{selectedAlbum.count} Tangkapan Layar</span>
+                      {selectedAlbum.place_id && (
+                        <a
+                          href={`https://www.roblox.com/games/${selectedAlbum.place_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 text-zinc-400 hover:text-white font-mono transition-colors"
+                        >
+                          <span>ID: {selectedAlbum.place_id}</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setSelectedAlbum(null)}
-                  className="text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
-                >
-                  Lihat Semua Album
-                </button>
+                <div className="flex items-center gap-2 self-start sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAlbum(null)}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors border border-zinc-700/80"
+                  >
+                    Lihat Semua Album
+                  </button>
+                </div>
               </div>
             </div>
 

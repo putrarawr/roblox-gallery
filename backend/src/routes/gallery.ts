@@ -2,6 +2,67 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { dbService } from '../db.js';
 import { storageService } from '../storage.js';
 
+interface PlaceThumbnailInfo {
+  thumbnailUrl: string | null;
+  iconUrl: string | null;
+  universeId: number | null;
+}
+
+const placeThumbnailCache = new Map<string, PlaceThumbnailInfo>();
+
+async function resolveRobloxMapThumbnails(placeId: string): Promise<PlaceThumbnailInfo> {
+  if (placeThumbnailCache.has(placeId)) {
+    return placeThumbnailCache.get(placeId)!;
+  }
+
+  try {
+    // 1. Get universeId
+    const uRes = await fetch(`https://apis.roblox.com/universes/v1/places/${placeId}/universe`, {
+      signal: AbortSignal.timeout(3500)
+    });
+    if (!uRes.ok) {
+      const empty = { thumbnailUrl: null, iconUrl: null, universeId: null };
+      placeThumbnailCache.set(placeId, empty);
+      return empty;
+    }
+    const { universeId } = await uRes.json() as { universeId?: number };
+    if (!universeId) {
+      const empty = { thumbnailUrl: null, iconUrl: null, universeId: null };
+      placeThumbnailCache.set(placeId, empty);
+      return empty;
+    }
+
+    // 2. Fetch 16:9 thumbnail and 1:1 icon in parallel
+    const [tRes, iRes] = await Promise.all([
+      fetch(`https://thumbnails.roblox.com/v1/games/multiget/thumbnails?universeIds=${universeId}&countPerUniverse=1&defaults=true&size=768x432&format=Png`, {
+        signal: AbortSignal.timeout(3500)
+      }),
+      fetch(`https://thumbnails.roblox.com/v1/games/icons?universeIds=${universeId}&returnPolicy=PlaceHolder&size=512x512&format=Png&isCircular=false`, {
+        signal: AbortSignal.timeout(3500)
+      })
+    ]);
+
+    let thumbnailUrl: string | null = null;
+    let iconUrl: string | null = null;
+
+    if (tRes.ok) {
+      const tData = await tRes.json() as { data?: Array<{ thumbnails?: Array<{ imageUrl?: string }> }> };
+      thumbnailUrl = tData.data?.[0]?.thumbnails?.[0]?.imageUrl || null;
+    }
+
+    if (iRes.ok) {
+      const iData = await iRes.json() as { data?: Array<{ imageUrl?: string }> };
+      iconUrl = iData.data?.[0]?.imageUrl || null;
+    }
+
+    const result: PlaceThumbnailInfo = { thumbnailUrl, iconUrl, universeId };
+    placeThumbnailCache.set(placeId, result);
+    return result;
+  } catch {
+    return { thumbnailUrl: null, iconUrl: null, universeId: null };
+  }
+}
+
 export async function galleryRoutes(fastify: FastifyInstance) {
   // Query gallery items with pagination and placeId filter
   fastify.get('/api/gallery/items', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -19,10 +80,39 @@ export async function galleryRoutes(fastify: FastifyInstance) {
     return reply.send(result);
   });
 
-  // Get list of unique Roblox games/places captured
+  // Get list of unique Roblox games/places captured (enriched with official map thumbnails)
   fastify.get('/api/gallery/places', async (request: FastifyRequest, reply: FastifyReply) => {
     const places = dbService.getUniquePlaces();
-    return reply.send({ places });
+
+    const enrichedPlaces = await Promise.all(
+      places.map(async (place) => {
+        if (place.place_id && place.place_id.trim() !== '') {
+          const meta = await resolveRobloxMapThumbnails(place.place_id);
+          return {
+            ...place,
+            thumbnail_url: meta.thumbnailUrl,
+            icon_url: meta.iconUrl
+          };
+        }
+        return {
+          ...place,
+          thumbnail_url: null,
+          icon_url: null
+        };
+      })
+    );
+
+    return reply.send({ places: enrichedPlaces });
+  });
+
+  // Dedicated endpoint to resolve Roblox map thumbnail & icon by placeId
+  fastify.get('/api/roblox/thumbnail/:placeId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { placeId } = request.params as { placeId: string };
+    if (!placeId) {
+      return reply.status(400).send({ error: 'placeId is required' });
+    }
+    const meta = await resolveRobloxMapThumbnails(placeId);
+    return reply.send(meta);
   });
 
   // Get gallery metrics & statistics

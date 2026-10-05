@@ -13,6 +13,8 @@ export interface PlaceSummary {
   place_name: string;
   count: number;
   latest_captured_at: string;
+  thumbnail_url?: string | null;
+  icon_url?: string | null;
 }
 
 export interface AlbumGroup {
@@ -20,6 +22,8 @@ export interface AlbumGroup {
   place_name: string;
   place_id: string | null;
   cover_url: string;
+  map_thumbnail_url?: string | null;
+  icon_url?: string | null;
   count: number;
   latest_captured_at: string;
   photos: Screenshot[];
