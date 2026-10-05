@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createClient } from '@supabase/supabase-js';
 import { config } from './config.js';
 
 // Ensure data and upload directories exist
@@ -46,10 +47,82 @@ export interface ScreenshotRecord {
   captured_at: string;
 }
 
+const supabaseClient = config.supabase.url && config.supabase.key
+  ? createClient(config.supabase.url, config.supabase.key)
+  : null;
+
+const CLOUD_META_KEY = 'gallery_meta.json';
+
+/**
+ * Sync all SQLite records to Supabase Cloud Storage to prevent data loss across container rebuilds
+ */
+export async function syncToCloud(): Promise<void> {
+  if (!supabaseClient) return;
+
+  try {
+    const allRecords = db.prepare('SELECT * FROM screenshots ORDER BY captured_at DESC').all() as unknown as ScreenshotRecord[];
+    await supabaseClient.storage.from(config.supabase.bucket).upload(
+      CLOUD_META_KEY,
+      JSON.stringify(allRecords, null, 2),
+      {
+        contentType: 'application/json',
+        upsert: true
+      }
+    );
+  } catch (err) {
+    console.error('[CloudSync] Failed to sync metadata to cloud:', err);
+  }
+}
+
+/**
+ * Restore metadata from Supabase Cloud Storage on startup if running on an ephemeral disk
+ */
+export async function initCloudSync(): Promise<void> {
+  if (!supabaseClient) return;
+
+  try {
+    const localCount = (db.prepare('SELECT COUNT(*) as count FROM screenshots').get() as { count: number })?.count || 0;
+
+    const { data, error } = await supabaseClient.storage.from(config.supabase.bucket).download(CLOUD_META_KEY);
+    if (error || !data) {
+      if (localCount > 0) {
+        await syncToCloud();
+      }
+      return;
+    }
+
+    const text = await data.text();
+    const cloudRecords: ScreenshotRecord[] = JSON.parse(text);
+
+    if (Array.isArray(cloudRecords) && cloudRecords.length > 0) {
+      console.log(`[CloudSync] Restoring ${cloudRecords.length} records from Supabase cloud backup...`);
+      const insertStmt = db.prepare(`
+        INSERT OR IGNORE INTO screenshots (id, image_url, storage_key, place_id, place_name, file_size_bytes, captured_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+
+      for (const rec of cloudRecords) {
+        insertStmt.run(
+          rec.id,
+          rec.image_url,
+          rec.storage_key,
+          rec.place_id,
+          rec.place_name,
+          rec.file_size_bytes,
+          rec.captured_at
+        );
+      }
+      console.log(`[CloudSync] Successfully restored ${cloudRecords.length} records into local SQLite.`);
+    }
+  } catch (err) {
+    console.error('[CloudSync] Error during cloud restore:', err);
+  }
+}
+
 export const dbService = {
   insertScreenshot(record: ScreenshotRecord): void {
     const stmt = db.prepare(`
-      INSERT INTO screenshots (id, image_url, storage_key, place_id, place_name, file_size_bytes, captured_at)
+      INSERT OR REPLACE INTO screenshots (id, image_url, storage_key, place_id, place_name, file_size_bytes, captured_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     stmt.run(
@@ -61,6 +134,8 @@ export const dbService = {
       record.file_size_bytes,
       record.captured_at
     );
+    // Asynchronously back up metadata to cloud
+    syncToCloud().catch(() => {});
   },
 
   getScreenshotById(id: string): ScreenshotRecord | undefined {
@@ -152,6 +227,8 @@ export const dbService = {
     const existing = this.getScreenshotById(id);
     if (!existing) return undefined;
     db.prepare('DELETE FROM screenshots WHERE id = ?').run(id);
+    // Asynchronously back up metadata to cloud
+    syncToCloud().catch(() => {});
     return existing;
   }
 };

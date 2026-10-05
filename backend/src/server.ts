@@ -4,6 +4,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import { config } from './config.js';
+import { initCloudSync } from './db.js';
 import { uploadRoutes } from './routes/upload.js';
 import { galleryRoutes } from './routes/gallery.js';
 import { wsManager } from './ws.js';
@@ -80,6 +81,9 @@ async function main() {
 
   // Start Server
   try {
+    // Restore persistent gallery metadata from cloud storage if running on ephemeral disk
+    await initCloudSync();
+
     await fastify.listen({ port: config.port, host: config.host });
     console.log('=====================================================');
     console.log(`🚀 Roblox Sync Gallery Backend listening on:`);

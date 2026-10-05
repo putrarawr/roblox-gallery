@@ -12,17 +12,17 @@ export const config = {
   host: process.env.HOST || '0.0.0.0',
   daemonSecret: process.env.DAEMON_SECRET || 'roblox-sync-gallery-secret-token',
   
-  // Storage settings: 'local', 'supabase', or 'r2'
-  storageDriver: (process.env.STORAGE_DRIVER || 'local').toLowerCase() as 'local' | 'supabase' | 'r2',
+  // Storage settings: 'local', 'supabase', or 'r2' (defaults to supabase for persistent cloud storage)
+  storageDriver: (process.env.STORAGE_DRIVER || 'supabase').toLowerCase() as 'local' | 'supabase' | 'r2',
   
   // Local storage paths
   localUploadDir: path.resolve(__dirname, '../uploads'),
   
   // Supabase Storage settings
   supabase: {
-    url: process.env.SUPABASE_URL || '',
-    key: process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-    bucket: process.env.SUPABASE_BUCKET || 'roblox-gallery'
+    url: process.env.SUPABASE_URL || 'https://qllxgthxeugqqkcsunoa.supabase.co',
+    key: process.env.SUPABASE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFsbHhndGh4ZXVncXFrY3N1bm9hIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc5MTE2NTc3MywiZXhwIjoyMTA2NzQxNzczfQ.1R1RDnGX1BrlHqiamZFgxtda5U35pcwFpejnR9TSg9U',
+    bucket: process.env.SUPABASE_BUCKET || 'screenshots'
   },
 
   // Cloudflare R2 / S3 settings
@@ -38,5 +38,5 @@ export const config = {
   dbPath: process.env.DB_PATH || path.resolve(__dirname, '../data/gallery.db'),
 
   // Public URL for local backend (for image URLs)
-  publicBaseUrl: process.env.PUBLIC_BASE_URL || 'http://localhost:4000'
+  publicBaseUrl: process.env.PUBLIC_BASE_URL || 'https://roblox-gallery-production.up.railway.app'
 };
