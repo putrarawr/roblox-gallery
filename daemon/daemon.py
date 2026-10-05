@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
 Roblox Cross-Platform Sync Gallery - Desktop Daemon
-Captures active screen on hotkey (Alt+1), resolves Roblox presence, and uploads to sync backend.
+Captures active screen on hotkey, resolves Roblox presence (via Sober local logs or Roblox Presence API),
+and uploads to sync backend.
 """
 
 import os
 import sys
 import io
 import time
+import glob
+import re
 import argparse
 import logging
+import subprocess
 from datetime import datetime, timezone
 import requests
 from dotenv import load_dotenv
 
-# Try importing screen capture and keyboard listeners
+# Try importing screen capture and image processing
 try:
     import mss
     from PIL import Image
@@ -22,16 +26,22 @@ except ImportError:
     print("[ERROR] Required modules not found. Run: pip install -r requirements.txt")
     sys.exit(1)
 
-# Load environment configuration
+# Load environment configuration (check daemon dir, root dir, and current working dir)
+script_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(script_dir, ".env"))
+load_dotenv(os.path.join(script_dir, "..", ".env"))
 load_dotenv()
 
 # Configuration defaults
-DEFAULT_API_URL = os.getenv("API_URL", "http://localhost:4000")
+DEFAULT_API_URL = os.getenv("API_URL", "https://roblox-gallery-production.up.railway.app")
 DEFAULT_DAEMON_SECRET = os.getenv("DAEMON_SECRET", "roblox-gallery-secret-token")
-DEFAULT_ROBLOX_USER_ID = os.getenv("ROBLOX_USER_ID", "")
-DEFAULT_HOTKEY = os.getenv("HOTKEY", "<alt>+1")
+DEFAULT_ROBLOX_USER_ID = os.getenv("ROBLOX_USER_ID", "7429208553")
+DEFAULT_HOTKEY = os.getenv("HOTKEY", "F12")
 IMAGE_FORMAT = os.getenv("IMAGE_FORMAT", "PNG").upper() # PNG or JPEG
 JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "95"))
+
+LOCK_FILE = "/tmp/roblox_gallery_capture.lock"
+DEBOUNCE_SECONDS = 2.5
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,20 +51,125 @@ logging.basicConfig(
 logger = logging.getLogger("RobloxDaemon")
 
 
+def check_capture_debounce() -> bool:
+    """
+    Prevents duplicate concurrent / rapid triggers within DEBOUNCE_SECONDS.
+    Ensures held-down keys or repeated triggers only snapshot once.
+    """
+    now = time.time()
+    if os.path.exists(LOCK_FILE):
+        try:
+            with open(LOCK_FILE, "r") as f:
+                content = f.read().strip()
+                if content:
+                    last_time = float(content)
+                    if now - last_time < DEBOUNCE_SECONDS:
+                        logger.warning(f"Capture debounced ({now - last_time:.2f}s since last capture). Skipping.")
+                        return False
+        except Exception:
+            pass
+
+    try:
+        with open(LOCK_FILE, "w") as f:
+            f.write(str(now))
+    except Exception as e:
+        logger.debug(f"Failed to write lock file: {e}")
+    return True
+
+
+def get_sober_presence():
+    """
+    Inspect Sober Flatpak local logs to determine active placeId and universeId.
+    Zero rate-limits and accurate for local Linux Roblox gameplay.
+    """
+    log_dir = os.path.expanduser("~/.var/app/org.vinegarhq.Sober/data/sober/appData/logs")
+    if not os.path.isdir(log_dir):
+        return None, None
+    log_files = glob.glob(os.path.join(log_dir, "*_Player_*_last.log"))
+    if not log_files:
+        return None, None
+    latest_log = max(log_files, key=os.path.getmtime)
+
+    # If log was modified more than 4 hours ago, Sober session may be inactive
+    if time.time() - os.path.getmtime(latest_log) > 14400:
+        return None, None
+
+    try:
+        with open(latest_log, "r", errors="ignore") as f:
+            lines = f.readlines()
+        place_id = None
+        universe_id = None
+        for line in reversed(lines):
+            m = re.search(r'placeid:(\d+).*?universeid:(\d+)', line)
+            if m:
+                place_id = m.group(1)
+                universe_id = m.group(2)
+                break
+            m2 = re.search(r'place (\d+)', line)
+            if m2 and not place_id:
+                place_id = m2.group(1)
+        return place_id, universe_id
+    except Exception as e:
+        logger.debug(f"Error reading Sober logs: {e}")
+        return None, None
+
+
 def get_roblox_presence(user_id: str):
     """
-    Query Roblox Presence API to get currently played placeId and placeName.
-    Uses universe resolution and public games API for accurate titles.
+    Resolves Roblox placeId and placeName.
+    Strategy:
+    1. Inspect Sober local logs (instant, zero rate-limit, perfect on Linux).
+    2. Fallback to Roblox Presence API.
     Returns: (place_id, place_name)
     """
-    if not user_id or not user_id.isdigit():
-        return None, "unknown place"
-
-    presence_url = "https://presence.roblox.com/v1/presence/users"
     headers = {
         "User-Agent": "RobloxSyncGalleryDaemon/1.0",
         "Content-Type": "application/json"
     }
+
+    # 1. Try Sober local log inspection first
+    try:
+        sober_pid, sober_uid = get_sober_presence()
+        if sober_uid or sober_pid:
+            place_name = None
+            if sober_uid:
+                try:
+                    g_url = f"https://games.roblox.com/v1/games?universeIds={sober_uid}"
+                    g_resp = requests.get(g_url, headers=headers, timeout=2.5)
+                    if g_resp.status_code == 200:
+                        g_data = g_resp.json().get("data", [])
+                        if g_data:
+                            place_name = g_data[0].get("name")
+                except Exception as e:
+                    logger.debug(f"Failed to fetch game details from sober universeId: {e}")
+
+            if not place_name and sober_pid:
+                try:
+                    u_url = f"https://apis.roblox.com/universes/v1/places/{sober_pid}/universe"
+                    u_resp = requests.get(u_url, headers=headers, timeout=2.0)
+                    if u_resp.status_code == 200:
+                        resolved_uid = u_resp.json().get("universeId")
+                        if resolved_uid:
+                            g_url = f"https://games.roblox.com/v1/games?universeIds={resolved_uid}"
+                            g_resp = requests.get(g_url, headers=headers, timeout=2.0)
+                            if g_resp.status_code == 200:
+                                g_data = g_resp.json().get("data", [])
+                                if g_data:
+                                    place_name = g_data[0].get("name")
+                except Exception as e:
+                    logger.debug(f"Failed to resolve sober place universe: {e}")
+
+            if place_name or sober_pid:
+                logger.info(f"Resolved from Sober log: placeId={sober_pid}, name='{place_name}'")
+                return sober_pid, place_name or "Roblox Game"
+    except Exception as e:
+        logger.debug(f"Sober resolution failed: {e}")
+
+    # 2. Fallback to Roblox Presence API
+    if not user_id or not user_id.isdigit():
+        return None, "unknown place"
+
+    presence_url = "https://presence.roblox.com/v1/presence/users"
     payload = {"userIds": [int(user_id)]}
 
     try:
@@ -73,7 +188,6 @@ def get_roblox_presence(user_id: str):
 
                     place_name = last_location if last_location and last_location.lower() != "roblox" else None
 
-                    # If universe_id is available directly from presence
                     if universe_id:
                         try:
                             g_url = f"https://games.roblox.com/v1/games?universeIds={universe_id}"
@@ -85,10 +199,8 @@ def get_roblox_presence(user_id: str):
                         except Exception as e:
                             logger.debug(f"Failed to fetch game details from universeId: {e}")
 
-                    # If we have place_id but still need name
                     elif place_id and not place_name:
                         try:
-                            # 1. Resolve universeId
                             u_url = f"https://apis.roblox.com/universes/v1/places/{place_id}/universe"
                             u_resp = requests.get(u_url, headers=headers, timeout=2.0)
                             if u_resp.status_code == 200:
@@ -116,13 +228,26 @@ def get_roblox_presence(user_id: str):
 def capture_screen(format_type="PNG", quality=95) -> bytes:
     """
     Capture native primary display and return image bytes.
+    Supports native Wayland capture via grim when running under Wayland.
     """
+    if os.getenv("WAYLAND_DISPLAY") or os.getenv("XDG_SESSION_TYPE") == "wayland":
+        import shutil
+        if shutil.which("grim"):
+            try:
+                proc = subprocess.run(["grim", "-"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+                if format_type.upper() == "JPEG":
+                    img = Image.open(io.BytesIO(proc.stdout))
+                    buffer = io.BytesIO()
+                    img.save(buffer, format="JPEG", quality=quality, optimize=True)
+                    buffer.seek(0)
+                    return buffer.getvalue()
+                return proc.stdout
+            except Exception as e:
+                logger.debug(f"grim capture fallback to mss: {e}")
+
     with mss.MSS() as sct:
-        # sct.monitors[0] is all monitors combined; [1] is primary monitor
         monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
         sct_img = sct.grab(monitor)
-        
-        # Convert raw BGRA to PIL Image
         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
 
         buffer = io.BytesIO()
@@ -167,10 +292,12 @@ def upload_screenshot(api_url: str, secret: str, image_bytes: bytes, place_id: s
 
         if resp.status_code == 200 or resp.status_code == 201:
             result = resp.json()
-            logger.info(f"SUCCESS! Uploaded in {duration_ms}ms! ID: {result.get('id')} - Syncing to mobile.")
+            logger.info(f"SUCCESS! Uploaded in {duration_ms}ms! ID: {result.get('id')} - Synced to mobile.")
             try:
-                import subprocess
-                subprocess.run(["notify-send", "-a", "Roblox Sync", "Roblox Sync Gallery", f"Tersinkron ke HP! ({place_name})"], check=False)
+                subprocess.run(
+                    ["notify-send", "-a", "Roblox Sync", "📸 Roblox Snapshot", f"Tersinkron ke Web!\nMap: {place_name}"],
+                    check=False
+                )
             except Exception:
                 pass
             return True, result
@@ -192,6 +319,9 @@ class CaptureController:
         self.is_busy = False
 
     def trigger_capture(self):
+        if not check_capture_debounce():
+            return
+
         if self.is_busy:
             logger.warning("Capture already in progress, skipping trigger...")
             return
@@ -243,7 +373,6 @@ def main():
     print("=====================================================")
 
     if args.trigger_now:
-        logger.info("Executing single test capture...")
         controller.trigger_capture()
         sys.exit(0)
 

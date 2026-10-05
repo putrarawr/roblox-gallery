@@ -14,7 +14,7 @@ echo "=========================================================="
 echo "    Roblox Cross-Platform Sync Gallery - Desktop Daemon"
 echo "=========================================================="
 echo "🎯 Target Cloud : Railway + Supabase Storage"
-echo "⌨️  Shortcut     : Alt + 1"
+echo "⌨️  Shortcut     : F12 (Gaming key) / Wayland grim"
 echo "Tekan Ctrl+C untuk berhenti."
 echo "=========================================================="
 
