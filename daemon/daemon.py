@@ -168,6 +168,11 @@ def upload_screenshot(api_url: str, secret: str, image_bytes: bytes, place_id: s
         if resp.status_code == 200 or resp.status_code == 201:
             result = resp.json()
             logger.info(f"SUCCESS! Uploaded in {duration_ms}ms! ID: {result.get('id')} - Syncing to mobile.")
+            try:
+                import subprocess
+                subprocess.run(["notify-send", "-a", "Roblox Sync", "Roblox Sync Gallery", f"Tersinkron ke HP! ({place_name})"], check=False)
+            except Exception:
+                pass
             return True, result
         else:
             logger.error(f"Upload failed HTTP {resp.status_code}: {resp.text}")
