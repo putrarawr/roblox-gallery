@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { dbService } from '../db.js';
 import { storageService } from '../storage.js';
 
-interface PlaceThumbnailInfo {
+export interface PlaceThumbnailInfo {
   thumbnailUrl: string | null;
   iconUrl: string | null;
   universeId: number | null;
@@ -10,7 +10,7 @@ interface PlaceThumbnailInfo {
 
 const placeThumbnailCache = new Map<string, PlaceThumbnailInfo>();
 
-async function resolveRobloxMapThumbnails(placeId: string): Promise<PlaceThumbnailInfo> {
+export async function resolveRobloxMapThumbnails(placeId: string): Promise<PlaceThumbnailInfo> {
   if (placeThumbnailCache.has(placeId)) {
     return placeThumbnailCache.get(placeId)!;
   }

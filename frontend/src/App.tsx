@@ -87,13 +87,19 @@ export function App() {
           (p) => (placeId && p.place_id === placeId) || p.place_name.toLowerCase() === placeName.toLowerCase()
         );
 
+        // Priority for official map thumbnail & icon:
+        // 1. Direct from placeMeta (if places API returned it)
+        // 2. Direct from any screenshot in the album (received via realtime WebSocket event)
+        const mapThumbUrl = placeMeta?.thumbnail_url || sorted.find((p) => p.thumbnail_url)?.thumbnail_url || null;
+        const iconUrl = placeMeta?.icon_url || sorted.find((p) => p.icon_url)?.icon_url || null;
+
         return {
           id: placeId || placeName,
           place_name: placeName,
           place_id: placeId,
           cover_url: sorted[0].image_url,
-          map_thumbnail_url: placeMeta?.thumbnail_url || null,
-          icon_url: placeMeta?.icon_url || null,
+          map_thumbnail_url: mapThumbUrl,
+          icon_url: iconUrl,
           count: sorted.length,
           latest_captured_at: sorted[0].captured_at,
           photos: sorted

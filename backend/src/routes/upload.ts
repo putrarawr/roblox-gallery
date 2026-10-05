@@ -4,6 +4,7 @@ import { config } from '../config.js';
 import { dbService } from '../db.js';
 import { storageService } from '../storage.js';
 import { wsManager } from '../ws.js';
+import { resolveRobloxMapThumbnails } from './gallery.js';
 
 const ALLOWED_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);
 const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15MB limit
@@ -94,12 +95,31 @@ export async function uploadRoutes(fastify: FastifyInstance) {
 
     dbService.insertScreenshot(record);
 
-    // 6. Broadcast Realtime Event to WebSocket clients
-    wsManager.broadcastNewScreenshot(record);
+    // Resolve official map thumbnail & icon if placeId is present
+    let mapThumbUrl: string | null = null;
+    let mapIconUrl: string | null = null;
+    if (placeId) {
+      try {
+        const meta = await resolveRobloxMapThumbnails(placeId);
+        mapThumbUrl = meta.thumbnailUrl;
+        mapIconUrl = meta.iconUrl;
+      } catch (err) {
+        // silent fallback
+      }
+    }
+
+    const broadcastPayload = {
+      ...record,
+      thumbnail_url: mapThumbUrl,
+      icon_url: mapIconUrl
+    };
+
+    // 6. Broadcast Realtime Event to WebSocket clients with official map thumbnail attached
+    wsManager.broadcastNewScreenshot(broadcastPayload);
 
     return reply.status(201).send({
       success: true,
-      ...record
+      ...broadcastPayload
     });
   });
 }

@@ -6,6 +6,8 @@ export interface Screenshot {
   place_name: string;
   file_size_bytes: number;
   captured_at: string;
+  thumbnail_url?: string | null;
+  icon_url?: string | null;
 }
 
 export interface PlaceSummary {
