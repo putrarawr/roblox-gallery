@@ -109,9 +109,14 @@ export function App() {
   }, []);
 
   // Realtime WebSocket sync hook
-  const { status: wsStatus } = useRealtimeSync({
+  const { status: wsStatus, reconnect: reconnectWs } = useRealtimeSync({
     onNewScreenshot: handleNewScreenshot
   });
+
+  const handleSettingsSaved = () => {
+    fetchData();
+    reconnectWs();
+  };
 
   // Handle delete
   const handleDeleteScreenshot = async (id: string) => {
@@ -353,7 +358,7 @@ export function App() {
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        onSave={fetchData}
+        onSave={handleSettingsSaved}
       />
     </div>
   );

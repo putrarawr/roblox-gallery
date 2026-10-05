@@ -46,6 +46,23 @@ async function main() {
     });
   });
 
+  // Root welcome / status endpoint
+  fastify.get('/', async () => {
+    return {
+      status: 'ok',
+      service: 'Roblox Cross-Platform Sync Gallery API',
+      version: '1.0.0',
+      activeWsClients: wsManager.getActiveCount(),
+      endpoints: {
+        health: '/api/health',
+        items: '/api/gallery/items',
+        places: '/api/gallery/places',
+        upload: '/api/gallery/upload',
+        ws: '/ws'
+      }
+    };
+  });
+
   // Health check
   fastify.get('/api/health', async () => {
     return {

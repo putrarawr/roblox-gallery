@@ -1,21 +1,32 @@
-export function getStoredApiUrl(): string {
-  if (typeof window !== 'undefined') {
-    return localStorage.getItem('roblox_gallery_api_url') || '';
+export function normalizeUrl(url: string): string {
+  if (!url || typeof url !== 'string') return '';
+  let clean = url.trim().replace(/\/+$/, '');
+  if (!clean) return '';
+
+  // If user entered without protocol (e.g. "roblox-gallery-production.up.railway.app")
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    // If localhost or local IP e.g. 192.168.x.x:4000
+    if (clean.startsWith('localhost') || clean.startsWith('127.0.0.1') || clean.match(/^192\.168\./) || clean.match(/^10\./)) {
+      clean = `http://${clean}`;
+    } else {
+      clean = `https://${clean}`;
+    }
   }
-  return '';
+
+  return clean;
 }
 
-export function getApiBaseUrl(): string {
+export function getStoredApiUrl(): string {
   if (typeof window !== 'undefined') {
     const stored = localStorage.getItem('roblox_gallery_api_url');
     if (stored && stored.trim() !== '') {
-      return stored.trim().replace(/\/$/, '');
+      return normalizeUrl(stored);
     }
   }
 
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl && typeof envUrl === 'string' && envUrl.trim() !== '') {
-    return envUrl.trim().replace(/\/$/, '');
+    return normalizeUrl(envUrl);
   }
 
   return '';
@@ -26,14 +37,20 @@ export function setStoredApiUrl(url: string): void {
     if (!url || url.trim() === '') {
       localStorage.removeItem('roblox_gallery_api_url');
     } else {
-      localStorage.setItem('roblox_gallery_api_url', url.trim().replace(/\/$/, ''));
+      const normalized = normalizeUrl(url);
+      localStorage.setItem('roblox_gallery_api_url', normalized);
     }
   }
+}
+
+export function getApiBaseUrl(): string {
+  return getStoredApiUrl();
 }
 
 export function getApiUrl(path: string): string {
   const base = getApiBaseUrl();
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  if (!base) return cleanPath;
   return `${base}${cleanPath}`;
 }
 
@@ -55,8 +72,8 @@ export function getWebSocketUrl(): string {
       const parsed = new URL(base);
       const protocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${protocol}//${parsed.host}/ws`;
-    } catch {
-      // fallback
+    } catch (e) {
+      console.warn('Failed to parse base URL for WS:', e);
     }
   }
 
